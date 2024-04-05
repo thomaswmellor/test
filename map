@@ -1,0 +1,856 @@
+<?php
+// Paramètres de connexion à la base de données
+$servername = "127.0.0.1:3306";
+$username = "iabbmainwebsit";
+$password = "b4NDCPE6a1rb7HPzQzyc";
+$dbname = "wp_iabbmainwebsit";
+
+// Créer une connexion
+$conn = new mysqli($servername, $username, $password, $dbname);
+
+// Vérifier la connexion
+if ($conn->connect_error) {
+    die("Échec de la connexion: " . $conn->connect_error);
+}
+
+$sql = "SELECT Category, Subcategory, Nom, Description, Location, Image, latitude, longitude FROM MapInfo";
+$result = $conn->query($sql);
+
+$activities = [];
+if ($result->num_rows > 0) {
+    while($row = $result->fetch_assoc()) {
+        $activities[$row['Category']][$row['Subcategory']][] = [
+            'name' => $row['Nom'],
+            'description' => $row['Description'],
+            'address' => $row['Location'],
+            'coordinates' => ['lat' => (float) $row['latitude'], 'lng' => (float) $row['longitude']],
+            'image' => $row['Image']
+        ];
+    }
+}
+$conn->close();
+
+// Préparation des données pour l'utilisation dans JavaScript
+$activitiesJson = json_encode($activities);
+?>
+
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive Map Guide</title>
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;700&family=Poppins:wght@400;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+    <style>
+        body, html {
+            margin-bottom: 20px;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100%;
+            background-color: #f5f5f5;
+            font-family: 'Montserrat', sans-serif;
+        }
+		
+        // Ajoutez ce code CSS dans votre bloc <style> pour contrôler l'affichage de la description
+        .activity-description {
+            display: none; /* Cache la description par défaut */
+            transition: all 0.5s ease; /* Transition douce pour l'affichage de la description */
+        }
+        
+        .activity-item.expanded .activity-description {
+            display: block; /* Affiche la description quand l'élément est étendu */
+        }
+        
+
+        title {
+            margin-top: 10px; /* Ajoutez la marge supérieure désirée */
+            /* autres propriétés de style */
+        }
+
+        .content-container {
+            display: flex;
+            justify-content: center; /* Centers children on the main axis (horizontally) */
+            align-items: center; /* Centers children on the cross axis (vertically) */
+            gap: 20px;
+            padding: 20px;
+            box-sizing: border-box;
+            height: 100%; /* You may adjust this if you don't want it to take full height */
+        }
+
+
+        #mapid {
+            height: 880px;
+            width: 861px;
+            border-radius: 20px;
+        }
+
+        #mainCategorySelect:hover {
+            background-color: #1F4B1D; /* Fond blanc au survol */
+            border: 1px solid #b3934b; /* Bordure verte de 2px */
+            color: #ffffff; /* Texte vert */
+            transition: color 0.3s;
+        }
+
+        #mainCategorySelect:focus option {
+            background-color: #ffffff; /* White background for options when focused */
+            color: #1F4B1D; /* Green text for options when focused */
+        }
+
+        .activity-list {
+            margin-bottom: 40px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            width: 413px;
+            height: 878px;
+            border-radius: 20px;
+            background-color: white;
+            padding: 10px;
+            box-sizing: border-box;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            overflow-y: auto;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1); /* Ombre horizontale, verticale, flou, couleur */
+            padding-top: 20px; /* Ajustez cette valeur selon l'espace désiré */
+        }
+
+        .popup-box {
+            display: none; /* Caché par défaut */
+            position: fixed; /* Positionnement fixe sur l'écran */
+            left: 50%;
+            top: 50%;
+            transform: translate(-50%, -50%); /* Centrer la boîte */
+            width: 690px;
+            height: 330px;
+            background-color: #ffffff;
+            border: 1px solid #B3934B;
+            border-radius: 20px;
+            padding: 20px;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2); /* Ombre pour un effet élévé */
+            z-index: 1000; /* S'assure que la boîte apparaît au-dessus des autres éléments */
+        }
+
+
+        /* Pour fermer le pop-up en cliquant en dehors */
+        .popup-overlay {
+            display: none; /* Caché par défaut */
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5); /* Fond semi-transparent */
+            z-index: 999; /* Juste derrière la boîte de pop-up */
+        }
+
+
+        .decorative-line {
+            width: 294px; /* Width of the line */
+            height: 2px; /* Height of the line, adjust as needed */
+            background-color: #B3934B; /* Color of the line */
+            border: none; /* Removes default border of hr */
+            margin: 30px 0; /* Adds space above and below the line, adjust as needed */
+        }
+
+        .activity-list h2 {
+            font-size: 26px;
+            font-weight: 600;
+            color: #1F4B1D;
+            text-align: center;
+            font-family: 'Poppins', sans-serif;
+            margin: 0;
+            margin-top: 20px; /* Ajustez cette valeur selon l'espace désiré au-dessus du titre */
+            margin-bottom: 20px; /* Et aussi en dessous du titre si nécessaire */
+        }
+
+        .close-btn {
+            position: absolute;
+            top: 10px;
+            right: 20px;
+            font-size: 30px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+
+
+        .dropdown-container,
+        .subcategory-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin-bottom: 10px;
+            gap: 5px; /* Ajustez cette valeur selon vos besoins pour réduire l'espacement */
+        }
+
+        #mainCategorySelect,
+        .subcategory-button,
+        .activity-item {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 30px;
+            border: none;
+            color: #265917; /* Couleur vert pour le titre */
+            font-weight: 600; /* Normal au lieu de gras */
+            font-family: 'Poppins'; /* Famille de polices pour la description */
+            font-size: 16px; /* Taille de police spécifiée pour le titre */
+            text-align: center; /* Centre le titre horizontalement */
+            cursor: pointer;
+            margin-bottom: 10px;
+        }
+
+
+        #mainCategorySelect {
+            font-family: 'Montserrat', sans-serif;
+            align-items: center;
+            margin-top: 20px;
+            margin-bottom: 0px;
+            width: 140px;
+            height: 31px;
+            background-color: #ffffff;
+            color: #1F4B1D;
+            border: 1px solid #1F4B1D;
+            padding: 0 15px;
+        }
+        #mainCategorySelect option {
+            background-color: #ffffff; /* White background for options */
+            color: #1F4B1D; /* Green text for options */
+        }
+        .subcategory-button {
+            background-color: white !important;
+            color: #1F4B1D !important;
+            padding: 10px 30px 10px 15px !important;
+            font-family:Tahoma !important;
+            border: none !important;
+            text-align: left !important;
+            width: 100% !important;
+            cursor: pointer !important;
+            position: relative !important;
+            font-size: 18px !important;
+            font-weight: 400 !important;
+            transition: color 0.3s !important;
+            padding: 10px 30px 10px 15px !important;
+        }
+
+        .subcategory-button.green-background {
+            background-color: transparent !important; /* Enlève spécifiquement l'arrière-plan vert s'il était ajouté */
+        }
+        
+        .subcategory-button {
+            box-shadow: none !important;
+        }
+        
+        
+
+        .subcategory-button::after {
+            position: absolute !important;
+            right: -90px !important;
+            top: 50% !important;
+            transform: translateY(-50%);
+            color: #1F4B1D; /* Couleur du `+` */
+            transition: transform 0.3s, color 0.3s; /* Transition pour les effets */
+        }
+
+        .subcategory-button.active::after {
+            content: '-' !important;
+            right:-10px !important;
+        }
+
+        .subcategory-button:hover, .subcategory-button.active {
+            color: #b3934b !important;
+        }
+
+        .subcategory-button:hover::after, .subcategory-button.active::after {
+            color: #b3934b !important;
+        }
+
+
+
+        .activity-item-container.active .subcategory-button {
+            color: #b3934b !important;
+        }
+
+
+
+            /* Ajustez l'espacement initial pour les .activity-item-container */
+            .activity-item-container {
+                margin-bottom: 15px; /* Espacement initial */
+            }
+
+
+
+            .activity-item {
+                min-height: 10px; /* Hauteur minimale pour garder l'élément à 300px, mais il peut s'étendre si le contenu est plus long */
+                height: auto; /* S'assure que la hauteur s'adapte au contenu */
+                overflow: hidden; /* Masque le contenu débordant, si vous préférez garder une hauteur stricte */
+                padding: 10px; /* Ajustez le padding selon le besoin */
+                display: flex;
+                flex-direction: column; /* Organise le titre et la description en colonne */
+                justify-content: flex-start; /* Alignement du contenu en haut */
+                border: 1px solid #B3934B; /* Bordure de l'élément */
+                margin-top: 20px; /* Espace entre les éléments d'activité */
+                border-radius: 3px; /* Arrondissement des coins */
+                background-color: white; /* Couleur de fond de l'élément */
+                cursor: pointer; /* Indique que l'élément est cliquable */
+                min-width: 250px;
+                max-width: 250px;
+            }
+
+
+            /* Style pour le titre de l'activité */
+            .activity-item > div {
+                color: #265917; /* Couleur vert pour le titre */
+                font-weight: 600; /* Normal au lieu de gras */
+                font-family: 'Poppins'; /* Famille de polices pour la description */
+                font-size: 16px; /* Taille de police spécifiée pour le titre */
+                text-align: center; /* Centre le titre horizontalement */
+            }
+
+            /* Style pour la description de l'activité */
+            .activity-item > p {
+                font-size: 14px; /* Réduit la taille de police pour la description */
+                font-family: 'Sans-Serif'; /* Famille de polices pour la description */
+                color: #484848d7; /* Couleur gris foncé pour la description */
+                margin-top: 20px; /* Espace entre le titre et la description */
+                font-weight: lighter; /* Normal au lieu de 150, car les valeurs de font-weight valides sont 100 à 900 */
+                text-align: center; /* Centre le texte de la description horizontalement */
+            }
+
+            .activity-item a {
+                font-size: 12px; /* Réduit encore la taille de police pour le lien "Go to" */
+                color: #1F4B1D; /* Couleur vert pour le lien */
+                text-decoration: none; /* Supprime le soulignement par défaut des liens */
+                margin-top: 5px; /* Espacement entre la description et le lien */
+                margin-bottom: 20px;
+                display: block; /* Change en block pour s'assurer qu'il soit sur sa propre ligne */
+                text-align: center; /* Centre le lien horizontalement */
+            }
+
+
+        .activity-item-container {
+            display: none; /* Masque l'élément par défaut */
+            margin-bottom: 0; /* Supprime la marge par défaut qui pourrait créer un espace */
+            opacity: 0;
+            transition: all 0.3s ease; /* Transition for the fade-in effect */
+            flex-direction: column;
+            align-items: center;
+        }
+        .activity-item-container.active {
+            display: block; /* Rend l'élément visible lorsque la sous-catégorie est active */
+            margin-bottom: 10px; /* Ajuste l'espace entre les éléments, si nécessaire */
+            flex-direction: column;
+            opacity: 1;
+        }
+
+
+        /* Animation for the subcategory buttons to pop a little */
+        @keyframes pop {
+            0% {
+                transform: scale(1);
+            }
+            50% {
+                transform: scale(1.15);
+            }
+            100% {
+                transform: scale(1);
+            }
+        }
+
+        .subcategory-button {
+            animation: pop 0.3s ease;
+        }
+
+        .activity-item:hover {
+            background-color: #fff8eb; /* Couleur de fond désirée au survol */
+        }
+
+        /* Extra styles for scroll bar */
+        .activity-list::-webkit-scrollbar {
+            width: 5px;
+        }
+
+        .activity-list::-webkit-scrollbar-track {
+            background: #f1f1f1; 
+        }
+        
+        .activity-list::-webkit-scrollbar-thumb {
+            background: #888; 
+        }
+
+        .activity-list::-webkit-scrollbar-thumb:hover {
+            background: #555; 
+        }
+
+        @keyframes jelly {
+            0%, 100% {
+                transform: scale(1);
+            }
+            25% {
+                transform: scale(0.9);
+            }
+            50% {
+                transform: scale(1.1);
+            }
+            75% {
+                transform: scale(0.95);
+            }
+        }
+
+
+        @media (max-width: 768px) {
+            /* Styles for screens smaller than 768px */
+
+            body, html {
+                display: block; /* Stack elements instead of flex */
+            }
+
+            .content-container {
+                flex-direction: column; /* Stack the map and the activity list */
+            }
+
+            #mapid {
+                width: 100%; /* Full width for small screens */
+                height: 400px; /* Shorter height for the map */
+            }
+
+            .activity-list {
+                width: 100%; /* Full width for the activity list */
+                height: auto; /* Adjust height dynamically */
+                margin-bottom: 20px; /* Less margin */
+            }
+
+            .popup-box {
+                width: 90%; /* Smaller width for the popup */
+                height: auto; /* Dynamic height */
+                padding: 10px; /* Less padding */
+            }
+
+            .subcategory-button,
+            .activity-item {
+                width: calc(100% - 20px); /* Full width minus padding */
+            }
+
+            /* And any other adjustments you need for smaller screens */
+        }
+
+
+</style>
+
+</head>
+<body>
+    <div class="content-container">
+        <div class="activity-list">
+            <h2>Explore Our Region</h2>
+            <div class="dropdown-container">
+                <select id="mainCategorySelect">
+                    <!-- Options will be populated by JavaScript -->
+                </select>
+            </div>
+            <hr class="decorative-line" /> <!-- Decorative line added here -->
+            <div class="subcategory-container" id="subcategoryButtons">
+                <!-- Subcategory buttons will be populated by JavaScript -->
+            </div>
+            <div id="itinerary">
+                <!-- Itinerary items will be populated here -->
+            </div>
+        </div>
+        <div id="mapid"></div>
+    </div>
+
+    <div class="popup-box" id="popupBox">
+        <span class="close-btn" id="closePopup">&times;</span> <!-- Bouton de fermeture ajouté ici -->
+        <h2 id="activityName"></h2>
+        <!-- Vous pouvez ajouter plus de contenu ici si nécessaire -->
+    </div>
+
+
+    <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+    <script>
+    var mymap = L.map('mapid').setView([51.3811, -2.3590], 13);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: 'Built By : <a href="https://www.wesiagency.com/">Wesi Agency &copy</a> Using : <a href="https://www.openstreetmap.org/copyright">OpenStreetMap &copy</a> contributors',
+        maxZoom: 18,
+    }).addTo(mymap);
+    
+    // Utilisation des données PHP dans JavaScript
+    var categories = <?php echo $activitiesJson; ?>;
+
+    // Déclaration d'un objet pour stocker les références des marqueurs
+    var activityMarkers = {};
+
+	// Conserver une référence au dernier marqueur survolé
+	var lastHoveredMarker = null;
+
+	Object.keys(categories).forEach(function(category) {
+		Object.keys(categories[category]).forEach(function(subcategory) {
+			categories[category][subcategory].forEach(function(activity) {
+				var marker = L.marker([activity.coordinates.lat, activity.coordinates.lng]).addTo(mymap);
+
+				// Nouveau contenu de popup basé sur votre modèle
+                var popupContent = `
+                <div style="display: flex; background-color: #ffffff; padding: 10px; border-radius: 8px; width: 300px;">
+                    <div style="flex: none; width: 100px;">
+                        <img src="${activity.image}" alt="Image of ${activity.name}" style="width: 100%; height: auto; border-radius: 8px;">
+                    </div>
+                    <div style="flex: 1; padding-left: 5px; /* Réduit le padding à gauche */ overflow: hidden;">
+                        <h2 style="color: #265917; font-size: 16px; margin: 0; font-family: 'Poppins', sans-serif; font-weight: 600; word-wrap: break-word;">
+                            ${activity.name}
+                        </h2>
+                        <p style="font-size: 14px; margin-top: 4px; word-wrap: break-word;">
+                            ${activity.description}
+                        </p>
+                        <a href="https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(activity.address)}" target="_blank" style="display: block; color: #265917; text-decoration: underline; cursor: pointer; margin-top: 8px;">
+                            Go to
+                        </a>
+                    </div>
+                </div>`;
+            
+            
+            
+            
+            
+				marker.bindPopup(popupContent);
+
+				marker.on('mouseover', function(e) {
+					// Fermer le popup du dernier marqueur survolé si ce n'est pas le même
+					if (lastHoveredMarker && lastHoveredMarker !== marker) {
+						lastHoveredMarker.closePopup();
+					}
+					lastHoveredMarker = marker;
+					this.openPopup();
+				});
+
+				// Pas besoin de fermer le popup sur 'mouseout'
+			});
+		});
+	});
+
+    
+    function onActivityClicked(lat, lng) {
+        var markerKey = lat + '_' + lng;
+        var marker = activityMarkers[markerKey];
+    
+        if (mymap.getZoom() === 18 && mymap.getCenter().lat === lat && mymap.getCenter().lng === lng) {
+            // Si l'utilisateur clique sur une activité déjà centrée, dézoomez
+            mymap.setView([51.3811, -2.3590], 13);
+        } else {
+            // Sinon, centrez la carte sur le marqueur et zoomez
+            mymap.setView([lat, lng], 18);
+            marker.openPopup();
+        }
+    }
+    
+    
+    function populateMainCategorySelect() {
+        var mainCategorySelect = document.getElementById('mainCategorySelect');
+        mainCategorySelect.innerHTML = ''; // Nettoyage des options existantes
+    
+        Object.keys(categories).forEach(function(category) {
+            var option = document.createElement('option');
+            option.value = category;
+            option.textContent = category;
+            mainCategorySelect.appendChild(option);
+        });
+    
+        // Sélection par défaut (optionnel)
+        if (Object.keys(categories).length > 0) {
+            mainCategorySelect.value = Object.keys(categories)[0];
+        }
+    }
+    
+    
+    document.addEventListener('DOMContentLoaded', function() {
+        populateMainCategorySelect();
+        handleMainCategoryChange();
+        document.getElementById('mainCategorySelect').addEventListener('change', handleMainCategoryChange);
+    });
+    
+    const defaultMapView = {
+        lat: 48.8566,
+        lng: 2.3522,
+        zoom: 13
+    };
+    
+    function handleMainCategoryChange() {
+        var selectedCategory = document.getElementById('mainCategorySelect').value;
+        var categoriesData = categories[selectedCategory];
+        var subcategoryContainer = document.getElementById('subcategoryButtons');
+        var activityList = document.getElementById('itinerary');
+    
+        subcategoryContainer.innerHTML = '';
+        activityList.innerHTML = '';
+    
+        Object.keys(categoriesData).forEach(function(subCategory, index) {
+            var button = document.createElement('button');
+            button.textContent = subCategory;
+            button.classList.add('subcategory-button');
+            button.addEventListener('click', function() { toggleActivitiesDisplay(index); });
+            subcategoryContainer.appendChild(button);
+    
+            var activityContainer = document.createElement('div');
+            activityContainer.classList.add('activity-item-container');
+            activityContainer.id = 'activities-' + index;
+    
+            categoriesData[subCategory].forEach(function(activity) {
+                var activityItem = document.createElement('div');
+                activityItem.classList.add('activity-item');
+                var titleDiv = document.createElement('div');
+                titleDiv.classList.add('activity-title');
+                titleDiv.textContent = activity.name;
+    
+                var descP = document.createElement('p');
+                descP.classList.add('activity-description');
+                descP.innerHTML = activity.description;
+                descP.style.display = 'none'; // Cache la description par défaut
+    
+                var goToButton = document.createElement('a');
+                goToButton.href = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(activity.address)}`;
+                goToButton.target = "_blank";
+                goToButton.textContent = "Go to";
+                goToButton.style = "display: none; margin-top: 10px; color: #265917; text-decoration: underline; cursor: pointer;"; // Le bouton est caché par défaut
+    
+                activityItem.appendChild(titleDiv);
+                activityItem.appendChild(descP);
+                activityItem.appendChild(goToButton);
+    
+                activityItem.dataset.latitude = activity.coordinates.lat;
+                activityItem.dataset.longitude = activity.coordinates.lng;
+    
+                activityItem.addEventListener('click', function(event) {
+                    // Empêcher l'événement de se propager si le clic est sur le bouton "Go to"
+                    if (event.target !== goToButton) {
+                        descP.style.display = descP.style.display === 'none' ? 'block' : 'none';
+                        goToButton.style.display = goToButton.style.display === 'none' ? 'block' : 'none'; // Basculer l'affichage du bouton en même temps que la description
+                        if (descP.style.display === 'block') {
+                            mymap.setView([activity.coordinates.lat, activity.coordinates.lng], 18);
+                        } else {
+                            mymap.setView([defaultMapView.lat, defaultMapView.lng], defaultMapView.zoom);
+                        }
+                    }
+                });
+    
+                activityContainer.appendChild(activityItem);
+            });
+    
+            subcategoryContainer.appendChild(activityContainer);
+        });
+    }
+    
+    function toggleActivitiesDisplay(index) {
+        var activityContainer = document.getElementById('activities-' + index);
+        if (activityContainer) {
+            activityContainer.classList.toggle('hidden');
+        }
+    }
+    
+    
+     
+           
+    
+    
+var pinColors = {
+    'Sleep': 'blue',
+    'Eat': 'red',
+    'Do': 'green',
+    'See': 'purple'
+};
+
+function closePopup() {
+    document.getElementById('popupBox').style.display = 'none';
+    document.getElementById('popupOverlay').style.display = 'none';
+}
+
+function initializeClosePopup() {
+    document.getElementById('closePopup').addEventListener('click', closePopup);
+    document.getElementById('popupOverlay').addEventListener('click', closePopup);
+}
+
+function populateMainCategorySelect() {
+    var mainCategorySelect = document.getElementById('mainCategorySelect');
+    mainCategorySelect.innerHTML = '';
+
+    Object.keys(categories).forEach(function(category) {
+        var option = document.createElement('option');
+        option.value = category;
+        option.textContent = category;
+        mainCategorySelect.appendChild(option);
+    });
+}
+
+function showPopup(activity) {
+    var lat = parseFloat(activity.latitude);
+    var lng = parseFloat(activity.longitude);
+    var markerKey = lat + ',' + lng;
+    var marker = activityMarkers[markerKey];
+
+    if (!marker) return; // Sortie anticipée si le marqueur n'existe pas
+
+    // Vérifie si le marqueur est déjà au centre
+    if (mymap.getZoom() === 18 && mymap.getCenter().equals(marker.getLatLng())) {
+        mymap.setView([51.3811, -2.3590], 13); // Coordonnées et zoom par défaut
+    } else {
+        mymap.setView(marker.getLatLng(), 18); // Zoom sur le marqueur
+        marker.openPopup();
+    }
+}
+
+
+
+function addActivityItemEventListeners() {
+    document.querySelectorAll('.activity-item').forEach(function(item) {
+        item.addEventListener('click', function() {
+            // Vérifie si l'élément cliqué est déjà 'actif'
+            if (this.classList.contains('active')) {
+                // Si oui, retire simplement la classe 'active', supprime la description et réinitialise le contenu
+                this.classList.remove('active');
+                this.innerHTML = this.dataset.name; // Revenir au nom de l'activité seulement
+                mymap.setView([51.384005, -2.365135], 13); // Réinitialise le zoom de la carte
+                return;
+            }
+
+            // Supprime la classe 'active' de tous les autres éléments et réinitialise leur contenu
+            document.querySelectorAll('.activity-item.active').forEach(activeItem => {
+                if (activeItem !== this) {
+                    activeItem.classList.remove('active');
+                    activeItem.innerHTML = activeItem.dataset.name;
+                }
+            });
+
+            var activityData = this.getAttribute('data-activity');
+            var activity = JSON.parse(activityData);
+
+            // Marque l'élément cliqué comme 'actif' et met à jour son contenu pour inclure la description
+            this.classList.add('active');
+            this.dataset.name = activity.name; // Sauvegarde le nom dans un attribut data pour pouvoir le réinitialiser plus tard
+            this.innerHTML = `
+                <div>${activity.name}</div>
+                <p>${activity.description}</p>
+                <a href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(activity.address)}" target="_blank" style="color: #CD7F32; margin-top: 5px; display: inline-block;">Go to</a>
+            `;
+
+            // Modifie la vue de la carte pour zoomer sur les coordonnées de l'activité
+            mymap.setView([activity.coordinates.lat, activity.coordinates.lng], 17); // 17 est le niveau de zoom, ajustable selon le besoin
+        });
+    });
+}
+
+// Fonction d'assistance pour insérer un élément après un autre, si nécessaire
+function insertAfter(newNode, referenceNode) {
+    referenceNode.parentNode.insertBefore(newNode, referenceNode.nextSibling);
+}
+
+
+
+
+// Fonction d'assistance pour insérer un élément après un autre
+function insertAfter(newNode, referenceNode) {
+    referenceNode.parentNode.insertBefore(newNode, referenceNode.nextSibling);
+}
+
+
+
+function toggleActivitiesDisplay(index) {
+    var activityContainers = document.querySelectorAll('.activity-item-container');
+    activityContainers.forEach((container, containerIndex) => {
+        if (containerIndex === index) {
+            container.classList.toggle('active'); // Bascule la visibilité
+        } else {
+            container.classList.remove('active');
+        }
+    });
+}
+
+function toggleActivitiesDisplay(index) {
+    var activityContainers = document.querySelectorAll('.activity-item-container');
+    activityContainers.forEach(function(container, containerIndex) {
+        if (index === containerIndex) {
+            container.classList.toggle('active');
+        } else {
+            container.classList.remove('active');
+        }
+    });
+}
+function adjustSpacingBasedOnActiveContainer() {
+    // Réinitialisez l'espacement pour tous les conteneurs à 15px
+    var allContainers = document.querySelectorAll('.activity-item-container');
+    allContainers.forEach(container => {
+        container.style.marginBottom = '15px';
+    });
+
+    // Ajustez l'espacement pour le conteneur actif
+    var activeContainers = document.querySelectorAll('.activity-item-container.active');
+    activeContainers.forEach(container => {
+        var activityCount = container.children.length;
+        var newSpacing = 15 + (activityCount > 0 ? 10 : 0); // Exemple: ajoutez 10px si des activités sont présentes
+        container.style.marginBottom = newSpacing + 'px';
+    });
+}
+
+
+document.getElementById('mainCategorySelect').addEventListener('change', handleMainCategoryChange);
+
+
+function addCategoryMarkers(category) {
+    // Effacer tous les marqueurs existants
+    mymap.eachLayer(function(layer) {
+        if (layer instanceof L.Marker) {
+            mymap.removeLayer(layer);
+        }
+    });
+
+    var latLngs = [];
+    for (var subCategory in categories[category]) {
+        categories[category][subCategory].forEach(function(activity) {
+            var marker = L.marker(activity.coordinates).addTo(mymap);
+            
+            // Mise à jour du contenu du pop-up pour appliquer les styles souhaités
+            var popupContent = `
+                <div style="color: #484848; font-family: 'Adobe Garamond Premier Pro', serif; background-color: #ffffff; padding: 10px; border-radius: 8px;">
+                    <h2 style="color: #265917; font-size: 18px; margin: 0 0 10px 0; font-family: 'Poppins', sans-serif; font-weight: 600;">${activity.name}</h2>
+                    <p style="font-size: 14px; margin: 10px 0; max-width: 300px;">${activity.description.length > 300 ? activity.description.substring(0, 300) + '...' : activity.description}</p>
+                    <a href="https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(activity.address)}" target="_blank" style="color: #265917; text-decoration: underline; cursor: pointer;">Go to</a>
+                </div>
+            `;
+
+            // Lier le contenu du pop-up au marqueur avec des options personnalisées
+            marker.bindPopup(popupContent, {
+                maxWidth: "400", // Ajustez la largeur maximale du pop-up ici
+                closeButton: true,
+                className: 'custom-popup'
+            });
+
+            marker.on('mouseover', function(e) {
+                this.openPopup();
+            });
+
+            latLngs.push(activity.coordinates);
+        });
+    }
+
+    // S'il existe des marqueurs, ajuster le zoom de la carte pour les englober
+    if (latLngs.length > 0) {
+        var bounds = L.latLngBounds(latLngs);
+        mymap.fitBounds(bounds);
+    }
+}
+
+
+
+// Écouter le changement de la sélection de catégorie
+document.getElementById('mainCategorySelect').addEventListener('change', function(e) {
+    addCategoryMarkers(e.target.value);
+});
+
+
+populateMainCategorySelect();
+handleMainCategoryChange();
+initializeClosePopup();
+</script>
+</body>
+</html>
